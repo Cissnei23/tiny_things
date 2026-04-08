@@ -547,7 +547,13 @@ let parsedData = null, rawText = '';
 
 // ── SIDEBAR ──────────────────────────────────────────────
 
-$('sb-toggle').addEventListener('click', () => sb.classList.toggle('open'));
+$('sb-toggle').addEventListener('click', () => {
+  sb.classList.toggle('open');
+  if (!sb.classList.contains('open')) {
+    document.querySelectorAll('.sb-panel').forEach(p => p.classList.remove('open'));
+    document.querySelectorAll('.sb-item').forEach(i => i.classList.remove('active'));
+  }
+});
 
 function bindPanel(btnId, panelId) {
   const btn = $(btnId), panel = $(panelId);
