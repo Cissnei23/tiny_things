@@ -395,6 +395,64 @@
     .jchildren { display: block; }
     .jblock.collapsed > .jchildren { display: none; }
 
+    /* ── TOC ───────────────────────────────────────────── */
+
+    .toc {
+      margin-bottom: 28px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .toc-head {
+      padding: 9px 14px;
+      background: var(--bg-alt);
+      font-family: 'Playfair Display', serif;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .toc-list {
+      list-style: none;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .toc-list::-webkit-scrollbar { width: 4px; }
+    .toc-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .toc-item a {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 14px;
+      text-decoration: none;
+      color: var(--text);
+      font-size: 13px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.12s, color 0.12s;
+    }
+    .toc-item:last-child a { border-bottom: none; }
+    .toc-item a:hover { background: var(--accent-dim); color: var(--accent); }
+
+    .toc-name {
+      font-family: 'Lora', serif;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+    }
+
+    .toc-count {
+      font-family: 'Courier Prime', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
     /* ── PARSE ERROR ───────────────────────────────────── */
 
     .perr {
@@ -735,14 +793,30 @@ function msgHTML({ role, text, time }) {
   </div>`;
 }
 
+// TOC builder
+function buildTOC(items) {
+  if (items.length <= 1) return '';
+  const rows = items.map((item, i) =>
+    `<li class="toc-item"><a href="#conv-${i}">
+      <span class="toc-name">${esc(item.title || '(untitled)')}</span>
+      <span class="toc-count">${item.count} msgs</span>
+    </a></li>`
+  ).join('');
+  return `<div class="toc"><div class="toc-head">Conversations — ${items.length}</div><ul class="toc-list">${rows}</ul></div>`;
+}
+
 // Claude
 function renderClaude(d) {
   const convs = Array.isArray(d) ? d : [d];
-  let html = '';
+  const tocItems = convs.map(conv => ({
+    title: conv.name || conv.title || '',
+    count: (conv.chat_messages || conv.messages || []).length
+  }));
+  let html = buildTOC(tocItems);
   convs.forEach((conv, i) => {
     if (i > 0) html += '<hr class="conv-divider">';
     const title = conv.name || conv.title;
-    if (title) html += `<div class="conv-title">${esc(title)}</div>`;
+    html += `<div class="conv-title" id="conv-${i}">${esc(title || '(untitled)')}</div>`;
     const msgs = conv.chat_messages || conv.messages || [];
     msgs.forEach(m => {
       let text = '';
@@ -762,10 +836,16 @@ function renderClaude(d) {
 // ChatGPT
 function renderChatGPT(d) {
   const convs = Array.isArray(d) ? d : [d];
-  let html = '';
+  const tocItems = convs.map(conv => {
+    const count = conv.mapping
+      ? Object.values(conv.mapping).filter(n => n.message?.author?.role !== 'system' && n.message?.content?.parts?.join('').trim()).length
+      : 0;
+    return { title: conv.title || '', count };
+  });
+  let html = buildTOC(tocItems);
   convs.forEach((conv, i) => {
     if (i > 0) html += '<hr class="conv-divider">';
-    if (conv.title) html += `<div class="conv-title">${esc(conv.title)}</div>`;
+    html += `<div class="conv-title" id="conv-${i}">${esc(conv.title || '(untitled)')}</div>`;
     if (!conv.mapping) return;
 
     const nodes = conv.mapping;
