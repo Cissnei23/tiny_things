@@ -488,6 +488,143 @@
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
     #file-input { display: none; }
+
+    /* ── LOAD MORE ─────────────────────────────────────── */
+
+    .load-more {
+      display: block;
+      margin: 16px auto;
+      padding: 8px 20px;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-family: 'Lora', serif;
+      font-size: 12px;
+      cursor: pointer;
+      border-radius: 3px;
+      transition: all 0.12s;
+    }
+    .load-more:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+
+    /* ── EXPORT MODAL ──────────────────────────────────── */
+
+    #exp-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(44,36,22,0.5);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    #exp-modal.open { display: flex; }
+
+    .modal-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      width: 90%;
+      max-width: 400px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+    }
+
+    .modal-head {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-family: 'Playfair Display', serif;
+      font-size: 14px;
+      color: var(--accent);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1;
+    }
+    .modal-close:hover { color: var(--accent); }
+
+    .modal-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+    }
+
+    .modal-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .modal-item:last-child { border-bottom: none; }
+
+    .modal-item input[type=checkbox] {
+      accent-color: var(--accent);
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+
+    .modal-item label {
+      flex: 1;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .modal-item .mi-title {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .modal-item .mi-count {
+      color: var(--muted);
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+
+    .modal-foot {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .modal-btn {
+      padding: 7px 14px;
+      border-radius: 3px;
+      font-family: 'Lora', serif;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+
+    .modal-btn.secondary {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .modal-btn.secondary:hover { border-color: var(--accent); color: var(--accent); }
+
+    .modal-btn.primary {
+      background: var(--accent);
+      border: 1px solid var(--accent);
+      color: #fff;
+    }
+    .modal-btn.primary:hover { background: var(--accent-h); border-color: var(--accent-h); }
   </style>
 </head>
 <body>
@@ -591,6 +728,21 @@
 <input type="file" id="file-input" accept=".json,application/json">
 <div id="toast"></div>
 
+<!-- Export Modal -->
+<div id="exp-modal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span>Select Conversations</span>
+      <button class="modal-close" id="modal-close">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-foot">
+      <button class="modal-btn secondary" id="modal-toggle-all">Select All</button>
+      <button class="modal-btn primary" id="modal-confirm">Export</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script>
@@ -603,6 +755,10 @@ const fmtSel = $('fmt-sel'), fsRange = $('fs-range'), fsVal = $('fs-val');
 const fileInput = $('file-input');
 
 let parsedData = null, rawText = '';
+let convMeta = []; // { title, count, rendered, totalMsgs }
+let currentFmt = 'generic';
+let pendingExportType = null;
+const BATCH_SIZE = 80;
 
 // ── SIDEBAR ──────────────────────────────────────────────
 
@@ -662,35 +818,83 @@ $('btn-clr').addEventListener('click', reset);
 
 // export txt
 $('exp-txt').addEventListener('click', () => {
-  const txt = extractText();
+  if (!parsedData) { showToast('Nothing to export'); return; }
+  if (convMeta.length > 1) {
+    pendingExportType = 'txt';
+    showExportModal();
+  } else {
+    doExportTxt(null);
+  }
+});
+
+// export pdf
+$('exp-pdf').addEventListener('click', () => {
+  if (rc.style.display === 'none') { showToast('Nothing to export'); return; }
+  if (convMeta.length > 1) {
+    pendingExportType = 'pdf';
+    showExportModal();
+  } else {
+    doExportPdf(null);
+  }
+});
+
+// modal logic
+const expModal = $('exp-modal');
+$('modal-close').addEventListener('click', () => expModal.classList.remove('open'));
+expModal.addEventListener('click', e => { if (e.target === expModal) expModal.classList.remove('open'); });
+
+$('modal-toggle-all').addEventListener('click', () => {
+  const boxes = document.querySelectorAll('#modal-body input[type=checkbox]');
+  const allChecked = [...boxes].every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  $('modal-toggle-all').textContent = allChecked ? 'Select All' : 'Deselect All';
+});
+
+$('modal-confirm').addEventListener('click', () => {
+  const boxes = document.querySelectorAll('#modal-body input[type=checkbox]');
+  const selected = [...boxes].map((b, i) => b.checked ? i : -1).filter(i => i >= 0);
+  if (!selected.length) { showToast('Select at least one'); return; }
+  expModal.classList.remove('open');
+  if (pendingExportType === 'txt') doExportTxt(selected);
+  else doExportPdf(selected);
+});
+
+function showExportModal() {
+  const body = $('modal-body');
+  body.innerHTML = convMeta.map((c, i) => `
+    <div class="modal-item">
+      <input type="checkbox" id="exp-chk-${i}" checked>
+      <label for="exp-chk-${i}">
+        <span class="mi-title">${esc(c.title || '(untitled)')}</span>
+        <span class="mi-count">${c.count} msgs</span>
+      </label>
+    </div>
+  `).join('');
+  $('modal-toggle-all').textContent = 'Deselect All';
+  expModal.classList.add('open');
+}
+
+function doExportTxt(selected) {
+  const txt = extractTextSelected(selected);
   if (!txt) { showToast('Nothing to export'); return; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain;charset=utf-8' }));
   a.download = 'decoded.txt';
   a.click();
   showToast('Saved as .txt');
-});
+}
 
-// export pdf
-$('exp-pdf').addEventListener('click', () => {
-  if (rc.style.display === 'none') { showToast('Nothing to export'); return; }
-  const clone = rc.cloneNode(true);
-  clone.style.cssText = `
-    font-family: 'Lora', Georgia, serif;
-    font-size: 13px;
-    color: #2C2416;
-    background: #F5F0E8;
-    padding: 0;
-    line-height: 1.8;
-  `;
+function doExportPdf(selected) {
+  const el = buildExportContent(selected);
+  if (!el) { showToast('Nothing to export'); return; }
   html2pdf().set({
     margin: [16, 20],
     filename: 'decoded.pdf',
     image: { type: 'jpeg', quality: 0.98 },
     html2canvas: { scale: 2, backgroundColor: '#F5F0E8', useCORS: true },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-  }).from(clone).save().then(() => showToast('Saved as .pdf'));
-});
+  }).from(el).save().then(() => showToast('Saved as .pdf'));
+}
 
 // ── DROPZONE ─────────────────────────────────────────────
 
@@ -753,6 +957,8 @@ function detect(d) {
 }
 
 function render(d, fmt) {
+  currentFmt = fmt;
+  convMeta = [];
   let html = '';
   switch (fmt) {
     case 'claude':   html = renderClaude(d);   break;
@@ -778,6 +984,10 @@ function showResult(html) {
       blk.classList.toggle('collapsed');
       t.textContent = blk.classList.contains('collapsed') ? '▶' : '▼';
     });
+  });
+  // bind load-more buttons
+  rc.querySelectorAll('.load-more').forEach(btn => {
+    btn.addEventListener('click', () => loadMoreMessages(btn));
   });
 }
 
@@ -808,17 +1018,19 @@ function buildTOC(items) {
 // Claude
 function renderClaude(d) {
   const convs = Array.isArray(d) ? d : [d];
-  const tocItems = convs.map(conv => ({
-    title: conv.name || conv.title || '',
-    count: (conv.chat_messages || conv.messages || []).length
-  }));
-  let html = buildTOC(tocItems);
+  convMeta = convs.map(conv => {
+    const msgs = conv.chat_messages || conv.messages || [];
+    return { title: conv.name || conv.title || '', count: msgs.length, rendered: Math.min(BATCH_SIZE, msgs.length), totalMsgs: msgs.length };
+  });
+  let html = buildTOC(convMeta);
   convs.forEach((conv, i) => {
     if (i > 0) html += '<hr class="conv-divider">';
     const title = conv.name || conv.title;
     html += `<div class="conv-title" id="conv-${i}">${esc(title || '(untitled)')}</div>`;
+    html += `<div class="conv-msgs" data-conv="${i}">`;
     const msgs = conv.chat_messages || conv.messages || [];
-    msgs.forEach(m => {
+    const toRender = msgs.slice(0, BATCH_SIZE);
+    toRender.forEach(m => {
       let text = '';
       if (typeof m.text === 'string')    text = m.text;
       else if (Array.isArray(m.content)) text = m.content.map(c => c.text || '').join('');
@@ -829,6 +1041,10 @@ function renderClaude(d) {
         time: m.created_at ? fmtDate(m.created_at) : ''
       });
     });
+    html += '</div>';
+    if (msgs.length > BATCH_SIZE) {
+      html += `<button class="load-more" data-conv="${i}" data-fmt="claude">Load more (${msgs.length - BATCH_SIZE} remaining)</button>`;
+    }
   });
   return html;
 }
@@ -836,80 +1052,110 @@ function renderClaude(d) {
 // ChatGPT
 function renderChatGPT(d) {
   const convs = Array.isArray(d) ? d : [d];
-  const tocItems = convs.map(conv => {
+  convMeta = convs.map(conv => {
     const count = conv.mapping
       ? Object.values(conv.mapping).filter(n => n.message?.author?.role !== 'system' && n.message?.content?.parts?.join('').trim()).length
       : 0;
-    return { title: conv.title || '', count };
+    return { title: conv.title || '', count, rendered: Math.min(BATCH_SIZE, count), totalMsgs: count };
   });
-  let html = buildTOC(tocItems);
+  let html = buildTOC(convMeta);
   convs.forEach((conv, i) => {
     if (i > 0) html += '<hr class="conv-divider">';
     html += `<div class="conv-title" id="conv-${i}">${esc(conv.title || '(untitled)')}</div>`;
-    if (!conv.mapping) return;
+    html += `<div class="conv-msgs" data-conv="${i}">`;
+    if (!conv.mapping) { html += '</div>'; return; }
 
-    const nodes = conv.mapping;
-    const rootId = Object.keys(nodes).find(id => nodes[id].parent == null);
-    if (!rootId) return;
-
-    const visited = new Set();
-    const visit = (nodeId) => {
-      if (!nodeId || visited.has(nodeId)) return;
-      visited.add(nodeId);
-      const node = nodes[nodeId];
-      if (!node) return;
-      const msg = node.message;
-      if (msg && msg.author?.role !== 'system' && msg.content?.parts) {
-        const text = msg.content.parts.filter(p => typeof p === 'string').join('\n').trim();
-        if (text) {
-          html += msgHTML({
-            role: msg.author.role || '?',
-            text,
-            time: msg.create_time ? fmtDate(new Date(msg.create_time * 1000).toISOString()) : ''
-          });
-        }
-      }
-      (node.children || []).forEach(visit);
-    };
-    visit(rootId);
+    const msgs = getGPTMessages(conv);
+    const toRender = msgs.slice(0, BATCH_SIZE);
+    toRender.forEach(m => { html += msgHTML(m); });
+    html += '</div>';
+    if (msgs.length > BATCH_SIZE) {
+      html += `<button class="load-more" data-conv="${i}" data-fmt="chatgpt">Load more (${msgs.length - BATCH_SIZE} remaining)</button>`;
+    }
   });
   return html;
+}
+
+function getGPTMessages(conv) {
+  if (!conv.mapping) return [];
+  const nodes = conv.mapping;
+  const rootId = Object.keys(nodes).find(id => nodes[id].parent == null);
+  if (!rootId) return [];
+  const result = [];
+  const visited = new Set();
+  const visit = (nodeId) => {
+    if (!nodeId || visited.has(nodeId)) return;
+    visited.add(nodeId);
+    const node = nodes[nodeId];
+    if (!node) return;
+    const msg = node.message;
+    if (msg && msg.author?.role !== 'system' && msg.content?.parts) {
+      const text = msg.content.parts.filter(p => typeof p === 'string').join('\n').trim();
+      if (text) {
+        result.push({
+          role: msg.author.role || '?',
+          text,
+          time: msg.create_time ? fmtDate(new Date(msg.create_time * 1000).toISOString()) : ''
+        });
+      }
+    }
+    (node.children || []).forEach(visit);
+  };
+  visit(rootId);
+  return result;
 }
 
 // Telegram
 function renderTelegram(d) {
+  const msgs = getTelegramMessages(d);
+  convMeta = [{ title: d.name || '', count: msgs.length, rendered: Math.min(BATCH_SIZE, msgs.length), totalMsgs: msgs.length }];
   let html = '';
-  if (d.name) html += `<div class="conv-title">${esc(d.name)}</div>`;
-  (d.messages || []).filter(m => m.type === 'message').forEach(m => {
+  if (d.name) html += `<div class="conv-title" id="conv-0">${esc(d.name)}</div>`;
+  html += '<div class="conv-msgs" data-conv="0">';
+  msgs.slice(0, BATCH_SIZE).forEach(m => { html += msgHTML(m); });
+  html += '</div>';
+  if (msgs.length > BATCH_SIZE) {
+    html += `<button class="load-more" data-conv="0" data-fmt="telegram">Load more (${msgs.length - BATCH_SIZE} remaining)</button>`;
+  }
+  return html;
+}
+
+function getTelegramMessages(d) {
+  return (d.messages || []).filter(m => m.type === 'message').map(m => {
     let text = '';
     if (typeof m.text === 'string') text = m.text;
     else if (Array.isArray(m.text)) text = m.text.map(t => typeof t === 'string' ? t : (t.text || '')).join('');
-    html += msgHTML({
-      role: m.from || m.actor || '?',
-      text,
-      time: m.date ? fmtDate(m.date) : ''
-    });
+    return { role: m.from || m.actor || '?', text, time: m.date ? fmtDate(m.date) : '' };
   });
-  return html;
 }
 
 // Discord
 function renderDiscord(d) {
-  let html = '';
+  const msgs = getDiscordMessages(d);
   const ch = d.channel?.name || d.channel?.category || '';
-  if (ch) html += `<div class="conv-title">#${esc(ch)}</div>`;
-  (d.messages || []).forEach(m => {
-    html += msgHTML({
-      role: m.author?.nickname || m.author?.name || '?',
-      text: m.content || '',
-      time: m.timestamp ? fmtDate(m.timestamp) : ''
-    });
-  });
+  convMeta = [{ title: ch ? `#${ch}` : '', count: msgs.length, rendered: Math.min(BATCH_SIZE, msgs.length), totalMsgs: msgs.length }];
+  let html = '';
+  if (ch) html += `<div class="conv-title" id="conv-0">#${esc(ch)}</div>`;
+  html += '<div class="conv-msgs" data-conv="0">';
+  msgs.slice(0, BATCH_SIZE).forEach(m => { html += msgHTML(m); });
+  html += '</div>';
+  if (msgs.length > BATCH_SIZE) {
+    html += `<button class="load-more" data-conv="0" data-fmt="discord">Load more (${msgs.length - BATCH_SIZE} remaining)</button>`;
+  }
   return html;
+}
+
+function getDiscordMessages(d) {
+  return (d.messages || []).map(m => ({
+    role: m.author?.nickname || m.author?.name || '?',
+    text: m.content || '',
+    time: m.timestamp ? fmtDate(m.timestamp) : ''
+  }));
 }
 
 // Generic JSON tree
 function renderGeneric(d) {
+  convMeta = [];
   return `<div class="json-tree">${jTree(d)}</div>`;
 }
 
@@ -946,6 +1192,104 @@ function extractText() {
   const fmt = fmtSel.value === 'auto' ? detect(parsedData) : fmtSel.value;
   if (fmt === 'generic') return JSON.stringify(parsedData, null, 2);
   return rc.innerText || '';
+}
+
+function extractTextSelected(selected) {
+  if (!parsedData) return '';
+  if (currentFmt === 'generic') return JSON.stringify(parsedData, null, 2);
+  if (!selected) return rc.innerText || '';
+
+  const convs = getConversations();
+  let text = '';
+  selected.forEach(i => {
+    if (convs[i]) {
+      const c = convs[i];
+      if (text) text += '\n\n---\n\n';
+      text += `[${c.title || '(untitled)'}]\n\n`;
+      const msgs = getMessagesForConv(i);
+      msgs.forEach(m => {
+        text += `[${m.role}]${m.time ? ' ' + m.time : ''}\n${m.text}\n\n`;
+      });
+    }
+  });
+  return text;
+}
+
+function buildExportContent(selected) {
+  if (!parsedData) return null;
+  if (currentFmt === 'generic') {
+    const div = document.createElement('div');
+    div.innerHTML = `<pre style="font-family:'Courier Prime',monospace;font-size:12px;white-space:pre-wrap;">${esc(JSON.stringify(parsedData, null, 2))}</pre>`;
+    return div;
+  }
+  if (!selected) return rc.cloneNode(true);
+
+  const div = document.createElement('div');
+  div.style.cssText = 'font-family:Lora,serif;font-size:13px;color:#2C2416;background:#F5F0E8;line-height:1.8;';
+  const convs = getConversations();
+  selected.forEach((ci, idx) => {
+    if (!convs[ci]) return;
+    if (idx > 0) div.innerHTML += '<hr style="border:none;border-top:1px solid #CEC5B0;margin:24px 0;">';
+    div.innerHTML += `<div style="font-family:Playfair Display,serif;font-size:16px;font-weight:700;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #317F7D;">${esc(convs[ci].title || '(untitled)')}</div>`;
+    const msgs = getMessagesForConv(ci);
+    msgs.forEach(m => {
+      div.innerHTML += `<div style="margin-bottom:14px;"><div style="font-family:Playfair Display,serif;font-size:11px;font-weight:700;color:#317F7D;text-transform:uppercase;letter-spacing:0.1em;">${esc(m.role)} <span style="font-family:Courier Prime,monospace;font-size:10px;color:#CEC5B0;margin-left:8px;">${m.time || ''}</span></div><div style="white-space:pre-wrap;">${esc(m.text)}</div></div>`;
+    });
+  });
+  return div;
+}
+
+function getConversations() {
+  if (!parsedData) return [];
+  if (currentFmt === 'claude') return Array.isArray(parsedData) ? parsedData : [parsedData];
+  if (currentFmt === 'chatgpt') return Array.isArray(parsedData) ? parsedData : [parsedData];
+  if (currentFmt === 'telegram') return [parsedData];
+  if (currentFmt === 'discord') return [parsedData];
+  return [];
+}
+
+function getMessagesForConv(i) {
+  const convs = getConversations();
+  const conv = convs[i];
+  if (!conv) return [];
+  if (currentFmt === 'claude') {
+    const msgs = conv.chat_messages || conv.messages || [];
+    return msgs.map(m => {
+      let text = '';
+      if (typeof m.text === 'string') text = m.text;
+      else if (Array.isArray(m.content)) text = m.content.map(c => c.text || '').join('');
+      else if (typeof m.content === 'string') text = m.content;
+      return { role: m.sender || m.role || '?', text, time: m.created_at ? fmtDate(m.created_at) : '' };
+    });
+  }
+  if (currentFmt === 'chatgpt') return getGPTMessages(conv);
+  if (currentFmt === 'telegram') return getTelegramMessages(conv);
+  if (currentFmt === 'discord') return getDiscordMessages(conv);
+  return [];
+}
+
+function loadMoreMessages(btn) {
+  const ci = parseInt(btn.dataset.conv);
+  const fmt = btn.dataset.fmt;
+  const container = rc.querySelector(`.conv-msgs[data-conv="${ci}"]`);
+  if (!container || !convMeta[ci]) return;
+
+  const rendered = convMeta[ci].rendered;
+  const total = convMeta[ci].totalMsgs;
+  const msgs = getMessagesForConv(ci);
+  const nextBatch = msgs.slice(rendered, rendered + BATCH_SIZE);
+
+  let html = '';
+  nextBatch.forEach(m => { html += msgHTML(m); });
+  container.insertAdjacentHTML('beforeend', html);
+
+  convMeta[ci].rendered = rendered + nextBatch.length;
+  const remaining = total - convMeta[ci].rendered;
+  if (remaining > 0) {
+    btn.textContent = `Load more (${remaining} remaining)`;
+  } else {
+    btn.remove();
+  }
 }
 
 function reset() {
